@@ -2,38 +2,42 @@ package ratelimiter
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// Strategy defines the interface for a rate limiting algorithm.
-// Any struct implementing Allow can be used as a pluggable strategy.
-type Strategy interface {
-	// Allow checks whether the request identified by key is permitted.
-	// Returns: allowed, remaining tokens/requests, window reset time, error.
-	Allow(ctx context.Context, key string) (allowed bool, remaining int, resetAt time.Time, err error)
-}
-
-// StrategyType enumerates the built-in rate limiting strategies.
+// StrategyType represents the rate limiting algorithm to use.
 type StrategyType string
 
 const (
-	// StrategyFixedWindow uses a fixed window counter.
-	StrategyFixedWindow StrategyType = "fixed_window"
-	// StrategySlidingWindow uses a sliding window counter.
+	StrategyFixedWindow   StrategyType = "fixed_window"
 	StrategySlidingWindow StrategyType = "sliding_window"
+	StrategyTokenBucket   StrategyType = "token_bucket"
+	StrategyLeakyBucket   StrategyType = "leaky_bucket"
 )
 
-// NewStrategy is a convenience factory that returns a Strategy based on the
-// provided StrategyType, Redis client, window duration, and request limit.
-func NewStrategy(st StrategyType, client *redis.Client, window time.Duration, max int) Strategy {
-	switch st {
+// Counter is the common interface implemented by all rate limiting strategies.
+type Counter interface {
+	Allow(ctx context.Context, key string) (allowed bool, remaining int, err error)
+}
+
+// NewStrategy returns a Counter for the given strategy type.
+// Defaults to SlidingWindow if the strategy is unrecognised.
+func NewStrategy(client *redis.Client, strategy StrategyType, rate int, window time.Duration) (Counter, error) {
+	switch strategy {
 	case StrategyFixedWindow:
-		return NewFixedWindowCounter(client, window, max)
+		return NewFixedWindowCounter(client, rate, window), nil
 	case StrategySlidingWindow:
-		return NewSlidingWindowCounter(client, window, max)
+		return NewSlidingWindowCounter(client, rate, window), nil
+	case StrategyTokenBucket:
+		return NewTokenBucketCounter(client, rate, window), nil
+	case StrategyLeakyBucket:
+		return NewLeakyBucketCounter(client, rate, window), nil
+	case "":
+		return NewSlidingWindowCounter(client, rate, window), nil
 	default:
-		return NewSlidingWindowCounter(client, window, max)
+		return nil, fmt.Errorf("unknown strategy %q; valid options: fixed_window, sliding_window, token_bucket, leaky_bucket", strategy)
 	}
 }

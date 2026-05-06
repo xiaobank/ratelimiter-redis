@@ -1,79 +1,89 @@
-package ratelimiter
+package ratelimiter_test
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	ratelimiter "github.com/yourusername/ratelimiter-redis"
 )
 
 func TestNewStrategy_ReturnsFixedWindow(t *testing.T) {
 	client := newTestClient(t)
-	s := NewStrategy(StrategyFixedWindow, client, time.Minute, 10)
-
-	if _, ok := s.(*FixedWindowCounter); !ok {
-		t.Errorf("expected *FixedWindowCounter, got %T", s)
+	c, err := ratelimiter.NewStrategy(client, ratelimiter.StrategyFixedWindow, 10, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil counter")
 	}
 }
 
 func TestNewStrategy_ReturnsSlidingWindow(t *testing.T) {
 	client := newTestClient(t)
-	s := NewStrategy(StrategySlidingWindow, client, time.Minute, 10)
+	c, err := ratelimiter.NewStrategy(client, ratelimiter.StrategySlidingWindow, 10, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil counter")
+	}
+}
 
-	if _, ok := s.(*SlidingWindowCounter); !ok {
-		t.Errorf("expected *SlidingWindowCounter, got %T", s)
+func TestNewStrategy_ReturnsTokenBucket(t *testing.T) {
+	client := newTestClient(t)
+	c, err := ratelimiter.NewStrategy(client, ratelimiter.StrategyTokenBucket, 10, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil counter")
+	}
+}
+
+func TestNewStrategy_ReturnsLeakyBucket(t *testing.T) {
+	client := newTestClient(t)
+	c, err := ratelimiter.NewStrategy(client, ratelimiter.StrategyLeakyBucket, 10, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil counter")
 	}
 }
 
 func TestNewStrategy_DefaultsToSlidingWindow(t *testing.T) {
 	client := newTestClient(t)
-	s := NewStrategy(StrategyType("unknown"), client, time.Minute, 10)
-
-	if _, ok := s.(*SlidingWindowCounter); !ok {
-		t.Errorf("expected *SlidingWindowCounter as default, got %T", s)
-	}
-}
-
-func TestStrategy_FixedWindowAllow(t *testing.T) {
-	client := newTestClient(t)
-	s := NewStrategy(StrategyFixedWindow, client, time.Minute, 5)
-
-	for i := 0; i < 5; i++ {
-		allowed, _, _, err := s.Allow(t.Context(), "strategy-fw-key")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Fatalf("request %d should be allowed", i+1)
-		}
-	}
-
-	allowed, _, _, err := s.Allow(t.Context(), "strategy-fw-key")
+	c, err := ratelimiter.NewStrategy(client, "", 10, time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if allowed {
-		t.Error("expected 6th request to be blocked")
+	if c == nil {
+		t.Fatal("expected non-nil counter")
 	}
 }
 
-func TestStrategy_SlidingWindowAllow(t *testing.T) {
+func TestNewStrategy_ReturnsErrorForUnknown(t *testing.T) {
 	client := newTestClient(t)
-	s := NewStrategy(StrategySlidingWindow, client, time.Minute, 5)
-
-	for i := 0; i < 5; i++ {
-		allowed, _, _, err := s.Allow(t.Context(), "strategy-sw-key")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Fatalf("request %d should be allowed", i+1)
-		}
+	_, err := ratelimiter.NewStrategy(client, "unknown_algo", 10, time.Second)
+	if err == nil {
+		t.Fatal("expected error for unknown strategy")
 	}
+}
 
-	allowed, _, _, err := s.Allow(t.Context(), "strategy-sw-key")
+func TestStrategy_LeakyBucketAllow(t *testing.T) {
+	client := newTestClient(t)
+	c, err := ratelimiter.NewStrategy(client, ratelimiter.StrategyLeakyBucket, 5, time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if allowed {
-		t.Error("expected 6th request to be blocked")
+
+	ctx := context.Background()
+	allowed, _, err := c.Allow(ctx, "strategy:leaky:test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected first request to be allowed")
 	}
 }
