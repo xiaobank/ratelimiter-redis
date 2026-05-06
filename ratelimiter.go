@@ -4,88 +4,70 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
-// Config holds the configuration for the rate limiter.
-type Config struct {
-	// Limit is the maximum number of requests allowed within the Window.
-	Limit int
-	// Window is the time duration for the rate limit window.
-	Window time.Duration
-	// KeyFunc extracts a unique key from the request (e.g., IP address or user ID).
-	KeyFunc func(r *http.Request) string
-	// LimitExceededHandler is called when the rate limit is exceeded.
-	// Defaults to a 429 Too Many Requests response.
-	LimitExceededHandler http.Handler
+// KeyFunc derives a rate-limit key from an incoming HTTP request.
+type KeyFunc func(r *http.Request) string
+
+// Counter is the interface implemented by every rate-limiting strategy.
+type Counter interface {
+	// Allow reports whether the request identified by key is permitted.
+	// It also returns the remaining quota and the window/reset duration.
+	Allow(ctx context.Context, key string) (allowed bool, remaining int, reset time.Duration, err error)
 }
 
-// RateLimiter is a Redis-backed HTTP rate limiter middleware.
-type RateLimiter struct {
-	client *redis.Client
-	cfg    Config
+// Options configures the middleware.
+type Options struct {
+	// Limiter is the rate-limiting strategy to use (required).
+	Limiter Counter
+
+	// KeyFunc determines the rate-limit key for each request.
+	// Defaults to the client's remote IP address.
+	KeyFunc KeyFunc
+
+	// LimitExceededHandler is called when a request is rejected.
+	// Defaults to a plain 429 response.
+	LimitExceededHandler http.HandlerFunc
 }
 
-// New creates a new RateLimiter with the given Redis client and config.
-func New(client *redis.Client, cfg Config) *RateLimiter {
-	if cfg.KeyFunc == nil {
-		cfg.KeyFunc = defaultKeyFunc
+// New returns an HTTP middleware that enforces the configured rate limit.
+func New(opts Options) func(http.Handler) http.Handler {
+	if opts.KeyFunc == nil {
+		opts.KeyFunc = defaultKeyFunc
 	}
-	if cfg.LimitExceededHandler == nil {
-		cfg.LimitExceededHandler = http.HandlerFunc(defaultLimitExceededHandler)
+	if opts.LimitExceededHandler == nil {
+		opts.LimitExceededHandler = defaultLimitExceededHandler
 	}
-	return &RateLimiter{client: client, cfg: cfg}
-}
 
-// Middleware returns an http.Handler that enforces the rate limit.
-func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := fmt.Sprintf("rl:%s", rl.cfg.KeyFunc(r))
-		ctx := context.Background()
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := opts.KeyFunc(r)
+			allowed, remaining, reset, err := opts.Limiter.Allow(r.Context(), key)
+			if err != nil {
+				// On backend error, fail open to avoid blocking legitimate traffic.
+				next.ServeHTTP(w, r)
+				return
+			}
 
-		count, err := rl.increment(ctx, key)
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+			w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%.0f", reset.Seconds()))
 
-		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.cfg.Limit))
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", max(0, rl.cfg.Limit-count)))
+			if !allowed {
+				opts.LimitExceededHandler(w, r)
+				return
+			}
 
-		if count > rl.cfg.Limit {
-			rl.cfg.LimitExceededHandler.ServeHTTP(w, r)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// increment atomically increments the request counter and sets TTL on first request.
-func (rl *RateLimiter) increment(ctx context.Context, key string) (int, error) {
-	pipe := rl.client.Pipeline()
-	incr := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, rl.cfg.Window)
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return 0, err
+			next.ServeHTTP(w, r)
+		})
 	}
-	return int(incr.Val()), nil
 }
 
 func defaultKeyFunc(r *http.Request) string {
-	return r.RemoteAddr
+	return IPKeyFunc(false)(r)
 }
 
 func defaultLimitExceededHandler(w http.ResponseWriter, _ *http.Request) {
 	http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
