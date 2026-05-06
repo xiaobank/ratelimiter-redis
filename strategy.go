@@ -1,60 +1,64 @@
 package ratelimiter
 
 import (
-	"context"
 	"fmt"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
-// StrategyType represents the rate limiting algorithm to use.
-type StrategyType string
-
+// Strategy names understood by NewStrategy.
 const (
-	StrategyFixedWindow   StrategyType = "fixed_window"
-	StrategySlidingWindow StrategyType = "sliding_window"
-	StrategyTokenBucket   StrategyType = "token_bucket"
-	StrategyLeakyBucket   StrategyType = "leaky_bucket"
+	StrategyFixedWindow   = "fixed_window"
+	StrategySlidingWindow = "sliding_window"
+	StrategyTokenBucket   = "token_bucket"
+	StrategyLeakyBucket   = "leaky_bucket"
+	StrategyBurst         = "burst"
 )
 
-// validStrategies lists all supported strategy types for validation and documentation.
-var validStrategies = []StrategyType{
+// ValidStrategies lists all supported strategy identifiers.
+var ValidStrategies = []string{
 	StrategyFixedWindow,
 	StrategySlidingWindow,
 	StrategyTokenBucket,
 	StrategyLeakyBucket,
+	StrategyBurst,
 }
 
-// Counter is the common interface implemented by all rate limiting strategies.
+// Counter is the common interface for all rate-limiting strategies.
 type Counter interface {
-	Allow(ctx context.Context, key string) (allowed bool, remaining int, err error)
+	Allow(ctx interface{ Value(interface{}) interface{} }, key string) (bool, int, error)
 }
 
-// NewStrategy returns a Counter for the given strategy type.
-// Defaults to SlidingWindow if the strategy is unrecognised.
-func NewStrategy(client *redis.Client, strategy StrategyType, rate int, window time.Duration) (Counter, error) {
-	switch strategy {
+// StrategyConfig holds parameters for building a Counter via NewStrategy.
+type StrategyConfig struct {
+	Strategy string
+	Store    Store
+	Limit    int
+	Burst    int // only used by burst strategy
+	Window   time.Duration
+}
+
+// NewStrategy constructs the appropriate Counter for the given strategy name.
+// Defaults to sliding_window when strategy is empty or unrecognised.
+func NewStrategy(cfg StrategyConfig) (interface{}, error) {
+	switch cfg.Strategy {
 	case StrategyFixedWindow:
-		return NewFixedWindowCounter(client, rate, window), nil
-	case StrategySlidingWindow:
-		return NewSlidingWindowCounter(client, rate, window), nil
+		return NewFixedWindowCounter(cfg.Store, cfg.Limit, cfg.Window), nil
+	case StrategySlidingWindow, "":
+		return NewSlidingWindowCounter(cfg.Store, cfg.Limit, cfg.Window), nil
 	case StrategyTokenBucket:
-		return NewTokenBucketCounter(client, rate, window), nil
+		return NewTokenBucketCounter(cfg.Store, cfg.Limit, cfg.Window), nil
 	case StrategyLeakyBucket:
-		return NewLeakyBucketCounter(client, rate, window), nil
-	case "":
-		return NewSlidingWindowCounter(client, rate, window), nil
+		return NewLeakyBucketCounter(cfg.Store, cfg.Limit, cfg.Window), nil
+	case StrategyBurst:
+		burst := cfg.Burst
+		if burst <= 0 {
+			burst = cfg.Limit / 2
+			if burst < 1 {
+				burst = 1
+			}
+		}
+		return NewBurstCounter(cfg.Store, cfg.Limit, burst, cfg.Window), nil
 	default:
-		return nil, fmt.Errorf("unknown strategy %q; valid options: fixed_window, sliding_window, token_bucket, leaky_bucket", strategy)
+		return nil, fmt.Errorf("unknown strategy %q; valid strategies: %v", cfg.Strategy, ValidStrategies)
 	}
-}
-
-// ValidStrategies returns a copy of all supported strategy types.
-func ValidStrategies() []StrategyType {
-	copy := make([]StrategyType, len(validStrategies))
-	for i, s := range validStrategies {
-		copy[i] = s
-	}
-	return copy
 }
