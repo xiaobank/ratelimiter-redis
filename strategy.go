@@ -18,6 +18,14 @@ const (
 	StrategyLeakyBucket   StrategyType = "leaky_bucket"
 )
 
+// validStrategies lists all supported strategy types for validation and documentation.
+var validStrategies = []StrategyType{
+	StrategyFixedWindow,
+	StrategySlidingWindow,
+	StrategyTokenBucket,
+	StrategyLeakyBucket,
+}
+
 // Counter is the common interface implemented by all rate limiting strategies.
 type Counter interface {
 	Allow(ctx context.Context, key string) (allowed bool, remaining int, err error)
@@ -40,4 +48,13 @@ func NewStrategy(client *redis.Client, strategy StrategyType, rate int, window t
 	default:
 		return nil, fmt.Errorf("unknown strategy %q; valid options: fixed_window, sliding_window, token_bucket, leaky_bucket", strategy)
 	}
+}
+
+// ValidStrategies returns a copy of all supported strategy types.
+func ValidStrategies() []StrategyType {
+	copy := make([]StrategyType, len(validStrategies))
+	for i, s := range validStrategies {
+		copy[i] = s
+	}
+	return copy
 }
