@@ -92,3 +92,21 @@ func TestWithRequestLogger_NilLogFnUsesDefault(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req) // no panic expected
 }
+
+func TestWithRequestLogger_LogsRemoteAddr(t *testing.T) {
+	var captured ratelimiter.LogEntry
+	logFn := func(e ratelimiter.LogEntry) { captured = e }
+
+	h := ratelimiter.WithRequestLogger(
+		http.HandlerFunc(logOKHandler), nil, logFn,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.RemoteAddr = "192.168.1.42:9999"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if captured.IP != "192.168.1.42" {
+		t.Fatalf("expected IP '192.168.1.42', got %q", captured.IP)
+	}
+}
