@@ -11,6 +11,10 @@ import (
 
 // ExampleWithRequestSizeLimit demonstrates how to cap incoming request body
 // size to 1 MB using the middleware.
+//
+// Requests whose Content-Length is within the limit are passed through to the
+// wrapped handler unchanged. Requests that exceed the limit receive an HTTP
+// 413 Request Entity Too Large response before the body is read.
 func ExampleWithRequestSizeLimit() {
 	const oneMB = 1 << 20 // 1 048 576 bytes
 
@@ -29,7 +33,7 @@ func ExampleWithRequestSizeLimit() {
 	handler.ServeHTTP(rec, req)
 	fmt.Println(rec.Code)
 
-	// Simulate an oversized request.
+	// Simulate an oversized request (Content-Length exceeds the 1 MB cap).
 	largeBody := strings.NewReader(strings.Repeat("x", oneMB+1))
 	req2 := httptest.NewRequest(http.MethodPost, "/upload", largeBody)
 	req2.ContentLength = int64(oneMB + 1)
