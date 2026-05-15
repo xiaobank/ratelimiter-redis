@@ -58,3 +58,12 @@ func WithSizeLimitHandler(h http.HandlerFunc) RequestSizeLimitOption {
 		}
 	}
 }
+
+// WithMaxBytes returns a RequestSizeLimitOption that sets the maximum allowed
+// request body size in bytes, overriding the value passed to WithRequestSizeLimit.
+// A value of 0 or less disables the limit.
+func WithMaxBytes(maxBytes int64) RequestSizeLimitOption {
+	return func(cfg *RequestSizeLimitConfig) {
+		cfg.MaxBytes = maxBytes
+	}
+}
