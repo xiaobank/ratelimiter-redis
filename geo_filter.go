@@ -2,6 +2,7 @@ package ratelimiter
 
 import (
 	"net/http"
+	"strings"
 )
 
 // GeoFilter holds a set of allowed or blocked country codes and a function
@@ -16,7 +17,7 @@ type GeoFilter struct {
 type GeoFilterOption func(*GeoFilter)
 
 // WithBlockedCountries creates a GeoFilter that blocks requests from the given
-// ISO 3166-1 alpha-2 country codes.
+// ISO 3166-1 alpha-2 country codes. Codes are normalized to uppercase.
 func WithBlockedCountries(codes ...string) *GeoFilter {
 	g := &GeoFilter{
 		codes:     make(map[string]struct{}, len(codes)),
@@ -24,13 +25,13 @@ func WithBlockedCountries(codes ...string) *GeoFilter {
 		resolveCC: defaultCountryCodeFunc,
 	}
 	for _, c := range codes {
-		g.codes[c] = struct{}{}
+		g.codes[strings.ToUpper(c)] = struct{}{}
 	}
 	return g
 }
 
 // WithAllowedCountries creates a GeoFilter that only allows requests from the
-// given ISO 3166-1 alpha-2 country codes.
+// given ISO 3166-1 alpha-2 country codes. Codes are normalized to uppercase.
 func WithAllowedCountries(codes ...string) *GeoFilter {
 	g := &GeoFilter{
 		codes:     make(map[string]struct{}, len(codes)),
@@ -38,7 +39,7 @@ func WithAllowedCountries(codes ...string) *GeoFilter {
 		resolveCC: defaultCountryCodeFunc,
 	}
 	for _, c := range codes {
-		g.codes[c] = struct{}{}
+		g.codes[strings.ToUpper(c)] = struct{}{}
 	}
 	return g
 }
@@ -53,7 +54,7 @@ func (g *GeoFilter) SetCountryCodeFunc(fn func(r *http.Request) string) {
 
 // Allowed reports whether the request should be allowed through.
 func (g *GeoFilter) Allowed(r *http.Request) bool {
-	cc := g.resolveCC(r)
+	cc := strings.ToUpper(g.resolveCC(r))
 	_, found := g.codes[cc]
 	if g.block {
 		return !found
