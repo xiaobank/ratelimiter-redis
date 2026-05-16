@@ -27,6 +27,20 @@ func NewGeoFilterWithOptions(opts ...GeoFilterOpt) *GeoFilter {
 	return g
 }
 
+// NewGeoFilterFromConfig builds a GeoFilter from a GeoFilterConfig struct.
+// This is a convenience wrapper around NewGeoFilterWithOptions for callers
+// that prefer struct-based configuration over functional options.
+func NewGeoFilterFromConfig(cfg GeoFilterConfig) *GeoFilter {
+	opts := []GeoFilterOpt{
+		WithGeoBlockMode(cfg.BlockMode),
+		WithGeoCodes(cfg.Codes...),
+	}
+	if cfg.ResolveCC != nil {
+		opts = append(opts, func(g *GeoFilter) { g.resolveCC = cfg.ResolveCC })
+	}
+	return NewGeoFilterWithOptions(opts...)
+}
+
 // GeoFilterOpt is a functional option for NewGeoFilterWithOptions.
 type GeoFilterOpt func(*GeoFilter)
 
